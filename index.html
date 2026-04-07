@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AeroFlight EFB | Unified Interface</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/inter-ui/3.19.3/inter.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        :root {
+            --ios-bg: #000000;
+            --ios-card: rgba(28, 28, 30, 0.8);
+            --ios-accent: #007AFF;
+            --ios-text: #FFFFFF;
+            --blur: saturate(180%) blur(20px);
+            --map-filter: brightness(0.9) contrast(1.1);
+        }
+
+        [data-theme="ll-mode"] {
+            --ios-text: #FF3B30;
+            --ios-accent: #FF3B30;
+            --map-filter: grayscale(100%) brightness(0.4) invert(1);
+        }
+
+        body { font-family: 'Inter', sans-serif; margin: 0; background: var(--ios-bg); color: var(--ios-text); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Sidebar */
+        .sidebar { width: 85px; background: rgba(10, 10, 10, 0.85); backdrop-filter: var(--blur); border-right: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; align-items: center; padding: 50px 0; z-index: 5000; }
+        .nav-icon { width: 55px; height: 55px; margin-bottom: 30px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer; transition: all 0.3s; }
+        .nav-icon.active { background: var(--ios-accent); color: white; }
+
+        .viewport { flex: 1; position: relative; background: #000; }
+        #map-container { width: 100%; height: 100%; filter: var(--map-filter); z-index: 1; }
+
+        /* Unified Flight Deck Panel (Top Right) */
+        .flight-deck { position: absolute; top: 20px; right: 20px; width: 280px; background: var(--ios-card); backdrop-filter: var(--blur); border-radius: 24px; padding: 18px; z-index: 1100; border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        
+        .clock-row { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+        .clock-item { text-align: center; flex: 1; }
+        .clock-time { font-family: monospace; font-size: 18px; font-weight: bold; color: var(--ios-accent); }
+        .clock-label { font-size: 9px; opacity: 0.5; text-transform: uppercase; letter-spacing: 1px; }
+
+        .instr-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; }
+        .instr-val { font-family: monospace; font-size: 20px; font-weight: bold; color: #FFF; }
+        .instr-label { font-size: 9px; opacity: 0.6; }
+
+        .timer-display { font-family: monospace; font-size: 32px; font-weight: bold; text-align: center; color: #00FF00; margin: 5px 0; }
+        .control-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        
+        .btn-ios { background: rgba(255,255,255,0.1); border: none; color: white; padding: 10px; border-radius: 12px; font-size: 12px; cursor: pointer; flex: 1; transition: background 0.2s; }
+        .btn-ios:active { background: rgba(255,255,255,0.2); }
+
+        /* Left Panel */
+        .fpl-panel { position: absolute; top: 20px; left: 20px; width: 200px; background: var(--ios-card); backdrop-filter: var(--blur); border-radius: 20px; padding: 15px; z-index: 1100; border: 1px solid rgba(255,255,255,0.1); }
+
+        /* Checklist System Styles */
+        .aircraft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; margin-top: 20px; }
+        .plane-card { background: rgba(255,255,255,0.05); border-radius: 18px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; }
+        .plane-card:hover { background: rgba(255,255,255,0.15); }
+        .check-item { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; font-size: 16px; cursor: pointer; }
+        .check-item input { width: 18px; height: 18px; accent-color: var(--ios-accent); }
+
+        /* Drawing & Overlays */
+        #drawing-canvas { position: absolute; inset: 0; z-index: 4000; background: #E5E5EA; display: none; touch-action: none; }
+        [data-theme="ll-mode"] #drawing-canvas { background: #1C1C1E; }
+        .drawing-tools { position: absolute; top: 20px; right: 20px; background: var(--ios-card); padding: 15px; border-radius: 20px; display: none; z-index: 4100; flex-direction: column; gap: 12px; align-items: center; }
+        .color-dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid white; cursor: pointer; }
+        .overlay-view { position: absolute; inset: 0; background: var(--ios-bg); z-index: 2000; display: none; padding: 60px; overflow-y: auto; }
+        .plane-marker { width: 40px; height: 40px; background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23007AFF"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>') no-repeat center; background-size: contain; }
+    </style>
+</head>
+<body>
+
+    <nav class="sidebar">
+        <div class="nav-icon active" onclick="showTab('map')">🗺️</div>
+        <div class="nav-icon" onclick="showTab('checklists')">📋</div>
+        <div class="nav-icon" onclick="showTab('notes')">✏️</div>
+        <div style="flex-grow: 1;"></div>
+        <div class="nav-icon" onclick="cycleTheme()">🌓</div>
+    </nav>
+
+    <div class="viewport">
+        <div id="map-container"></div>
+        
+        <div class="fpl-panel" id="fpl-panel">
+            <div style="font-size: 10px; opacity: 0.6;">ROUTE DISTANCE</div>
+            <div style="font-size: 24px; font-weight: 800; color: var(--ios-accent);"><span id="total-nm">0.0</span> NM</div>
+            <div style="margin-top: 10px; display: flex; gap: 5px;">
+                <button class="btn-ios" onclick="undoWaypoint()">Undo</button>
+                <button class="btn-ios" onclick="clearRoute()">Clear</button>
+            </div>
+        </div>
+
+        <div class="flight-deck" id="flight-deck">
+            <div class="clock-row">
+                <div class="clock-item">
+                    <div class="clock-time" id="time-local">00:00:00</div>
+                    <div class="clock-label">Local</div>
+                </div>
+                <div class="clock-item" style="border-left: 1px solid rgba(255,255,255,0.1);">
+                    <div class="clock-time" id="time-zulu">00:00Z</div>
+                    <div class="clock-label">Zulu</div>
+                </div>
+            </div>
+
+            <div class="instr-grid">
+                <div>
+                    <div class="instr-val" id="inst-gs">0</div>
+                    <div class="instr-label">KTS</div>
+                </div>
+                <div>
+                    <div class="instr-val" id="inst-alt">0</div>
+                    <div class="instr-label">ALT (FT)</div>
+                </div>
+                <div>
+                    <div class="instr-val" id="inst-hdg">0°</div>
+                    <div class="instr-label">TRK</div>
+                </div>
+            </div>
+
+            <div style="background: rgba(0,0,0,0.3); border-radius: 15px; padding: 10px;">
+                <div class="timer-display" id="sw-display">00:00.0</div>
+                <div class="control-row">
+                    <button class="btn-ios" onclick="toggleStopwatch()" id="sw-toggle">START</button>
+                    <button class="btn-ios" onclick="resetStopwatch()">RESET</button>
+                </div>
+            </div>
+
+            <div class="control-row">
+                <input type="number" id="tm-input" value="10" style="background:transparent; border:1px solid #444; color:#FF9500; width:45px; border-radius:5px; text-align:center;">
+                <span class="timer-display" id="tm-display" style="font-size: 20px; color: #FF9500; flex: 1;">00:00</span>
+                <button class="btn-ios" style="max-width: 60px;" onclick="toggleTimer()" id="tm-toggle">SET</button>
+            </div>
+        </div>
+
+        <canvas id="drawing-canvas"></canvas>
+        <div class="drawing-tools" id="draw-tools">
+            <div class="color-dot" style="background: #007AFF;" onclick="setPen('#007AFF')"></div>
+            <div class="color-dot" style="background: #FF3B30;" onclick="setPen('#FF3B30')"></div>
+            <div class="color-dot" style="background: #000000;" onclick="setPen('#000000')"></div>
+            <button class="btn-ios" onclick="setPen('eraser')">Eraser</button>
+            <button class="btn-ios" onclick="clearCanvas()">Clear</button>
+        </div>
+
+        <div id="view-checklists" class="overlay-view">
+            <div id="checklist-home">
+                <div onclick="showTab('map')" style="color: var(--ios-accent); cursor: pointer; margin-bottom: 20px; font-weight: bold;">❮ Back to Map</div>
+                <h1 style="margin: 0;">Checklists</h1>
+                <p style="opacity: 0.6;">Select aircraft type</p>
+                <div class="aircraft-grid">
+                    <div class="plane-card" onclick="openChecklist('PA-28-161')"><h3>Piper Warrior</h3></div>
+                    <div class="plane-card" onclick="openChecklist('C172N')"><h3>Cessna 172</h3></div>
+                </div>
+            </div>
+
+            <div id="checklist-detail" style="display:none;">
+                <div onclick="closeChecklistDetail()" style="color: var(--ios-accent); cursor: pointer; margin-bottom: 20px; font-weight: bold;">❮ Aircraft Selection</div>
+                <h1 id="active-plane-title" style="margin-bottom: 30px;">---</h1>
+                <div id="checklist-items-container"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    let map, planeMarker, routeLine, routePoints = [], waypoints = [];
+    let swInterval, swStart, swElapsed = 0, swRunning = false;
+    let tmInterval, tmRemaining = 0, tmRunning = false;
+
+    // Checklist Data
+    const checklistData = {
+        'PA-28-161': ["Fuel Selector - Fullest Tank", "Mixture - Rich", "Carb Heat - Off", "Magnetos - Check", "Flaps - Set for Takeoff"],
+        'C172N': ["Fuel Selector - Both", "Mixture - Rich", "Flaps - 10 Degrees", "Trim - Takeoff", "Master Switch - On"]
+    };
+
+    function initMap() {
+        map = L.map('map-container', { zoomControl: false, attributionControl: false }).setView([43.1594, -79.2467], 13);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }).addTo(map);
+        const planeIcon = L.divIcon({ className: 'plane-marker', iconSize: [40, 40], iconAnchor: [20, 20] });
+        planeMarker = L.marker([43.1594, -79.2467], { icon: planeIcon }).addTo(map);
+        routeLine = L.polyline([], { color: '#007AFF', weight: 4, dashArray: '10, 10' }).addTo(map);
+        map.on('click', (e) => addWaypoint(e.latlng));
+        
+        startSystemLoops();
+    }
+
+    function startSystemLoops() {
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('time-local').innerText = now.toLocaleTimeString([], { hour12: false });
+            document.getElementById('time-zulu').innerText = now.getUTCHours().toString().padStart(2,'0') + ":" + now.getUTCMinutes().toString().padStart(2,'0') + "Z";
+        }, 1000);
+
+        navigator.geolocation.watchPosition((p) => {
+            planeMarker.setLatLng([p.coords.latitude, p.coords.longitude]);
+            document.getElementById('inst-gs').innerText = (p.coords.speed * 1.94384 || 0).toFixed(0);
+            document.getElementById('inst-alt').innerText = (p.coords.altitude * 3.28084 || 0).toFixed(0);
+            document.getElementById('inst-hdg').innerText = (p.coords.heading || 0).toFixed(0) + "°";
+        }, null, { enableHighAccuracy: true });
+    }
+
+    function addWaypoint(latlng) {
+        routePoints.push(latlng);
+        const dot = L.circleMarker(latlng, { radius: 6, color: '#FFF', fillColor: '#007AFF', fillOpacity: 1 }).addTo(map);
+        waypoints.push(dot);
+        routeLine.setLatLngs(routePoints);
+        updateTotals();
+    }
+
+    function undoWaypoint() {
+        if (routePoints.length > 0) {
+            routePoints.pop();
+            const last = waypoints.pop();
+            if(last) map.removeLayer(last);
+            routeLine.setLatLngs(routePoints);
+            updateTotals();
+        }
+    }
+
+    function clearRoute() {
+        routePoints = []; waypoints.forEach(w => map.removeLayer(w)); waypoints = [];
+        routeLine.setLatLngs([]); updateTotals();
+    }
+
+    function updateTotals() {
+        let m = 0;
+        for (let i = 0; i < routePoints.length - 1; i++) m += map.distance(routePoints[i], routePoints[i+1]);
+        document.getElementById('total-nm').innerText = (m / 1852).toFixed(1);
+    }
+
+    /* --- CHECKLIST LOGIC --- */
+    function openChecklist(planeId) {
+        document.getElementById('checklist-home').style.display = 'none';
+        document.getElementById('checklist-detail').style.display = 'block';
+        document.getElementById('active-plane-title').innerText = planeId;
+        
+        const container = document.getElementById('checklist-items-container');
+        container.innerHTML = "";
+        checklistData[planeId].forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'check-item';
+            div.innerHTML = `<input type="checkbox"> <span>${item}</span>`;
+            div.onclick = function() {
+                const cb = this.querySelector('input');
+                cb.checked = !cb.checked;
+            };
+            container.appendChild(div);
+        });
+    }
+
+    function closeChecklistDetail() {
+        document.getElementById('checklist-home').style.display = 'block';
+        document.getElementById('checklist-detail').style.display = 'none';
+    }
+
+    /* --- TIMER LOGIC --- */
+    function toggleStopwatch() {
+        if (!swRunning) {
+            swStart = Date.now() - swElapsed;
+            swInterval = setInterval(() => {
+                swElapsed = Date.now() - swStart;
+                let d = new Date(swElapsed);
+                document.getElementById('sw-display').innerText = `${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}.${Math.floor(d.getUTCMilliseconds()/100)}`;
+            }, 100);
+            document.getElementById('sw-toggle').innerText = "STOP";
+        } else { clearInterval(swInterval); document.getElementById('sw-toggle').innerText = "START"; }
+        swRunning = !swRunning;
+    }
+
+    function resetStopwatch() {
+        clearInterval(swInterval); swElapsed = 0; swRunning = false;
+        document.getElementById('sw-display').innerText = "00:00.0";
+        document.getElementById('sw-toggle').innerText = "START";
+    }
+
+    function toggleTimer() {
+        if (!tmRunning) {
+            tmRemaining = parseInt(document.getElementById('tm-input').value) * 60;
+            tmInterval = setInterval(() => {
+                if (tmRemaining <= 0) { clearInterval(tmInterval); return; }
+                tmRemaining--;
+                document.getElementById('tm-display').innerText = `${String(Math.floor(tmRemaining/60)).padStart(2,'0')}:${String(tmRemaining%60).padStart(2,'0')}`;
+            }, 1000);
+            document.getElementById('tm-toggle').innerText = "STOP";
+        } else { clearInterval(tmInterval); document.getElementById('tm-toggle').innerText = "SET"; }
+        tmRunning = !tmRunning;
+    }
+
+    /* --- DRAWING --- */
+    const canvas = document.getElementById('drawing-canvas');
+    const ctx = canvas.getContext('2d');
+    let isDrawing = false, savedData = null;
+
+    function initCanvas() {
+        canvas.width = window.innerWidth - 85; canvas.height = window.innerHeight;
+        ctx.lineCap = 'round'; ctx.lineWidth = 5;
+        setPen('#007AFF');
+        if (savedData) ctx.putImageData(savedData, 0, 0);
+    }
+
+    function setPen(color) {
+        if (color === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.lineWidth = 30; }
+        else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = color; ctx.lineWidth = 5; }
+    }
+
+    canvas.addEventListener('pointerdown', (e) => { isDrawing = true; ctx.beginPath(); ctx.moveTo(e.clientX - 85, e.clientY); });
+    canvas.addEventListener('pointermove', (e) => { if (isDrawing) { ctx.lineTo(e.clientX - 85, e.clientY); ctx.stroke(); }});
+    canvas.addEventListener('pointerup', () => { isDrawing = false; savedData = ctx.getImageData(0,0,canvas.width,canvas.height); });
+    function clearCanvas() { ctx.clearRect(0,0,canvas.width,canvas.height); savedData = null; }
+
+    function showTab(tab) {
+        document.querySelectorAll('.nav-icon').forEach(i => i.classList.remove('active'));
+        ['view-checklists', 'fpl-panel', 'flight-deck', 'drawing-canvas', 'draw-tools'].forEach(id => {
+            const el = document.getElementById(id);
+            if(el) el.style.display = 'none';
+        });
+
+        if(tab === 'map') {
+            document.querySelector('.nav-icon:nth-child(1)').classList.add('active');
+            document.getElementById('fpl-panel').style.display = 'block';
+            document.getElementById('flight-deck').style.display = 'flex';
+        } else if(tab === 'checklists') {
+            document.querySelector('.nav-icon:nth-child(2)').classList.add('active');
+            document.getElementById('view-checklists').style.display = 'block';
+        } else if(tab === 'notes') {
+            document.querySelector('.nav-icon:nth-child(3)').classList.add('active');
+            canvas.style.display = 'block'; document.getElementById('draw-tools').style.display = 'flex';
+            initCanvas();
+        }
+    }
+
+    function cycleTheme() {
+        const b = document.body;
+        b.setAttribute('data-theme', b.getAttribute('data-theme') === 'dark' ? 'll-mode' : 'dark');
+        if (canvas.style.display === 'block') initCanvas();
+    }
+
+    window.onload = initMap;
+</script>
+</body>
+</html>
